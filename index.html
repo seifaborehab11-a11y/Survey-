@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1317">
+<title>أداة المساحة</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* تصميم ميداني: خلفية محايدة باردة، لون البرتقالي المستخدم في أوتاد الرفع المساحي كلون وحيد للتأكيد، أرقام أحادية العرض */
+:root {
+  --bg: #eef1f3; --surface: #ffffff; --surface2: #e3e8ec; --ink: #12181d; --muted: #566570; --line: #cfd6dc;
+  --accent: #e25a0b; --on-accent: #ffffff; --good: #17803f; --warn: #a15f00; --bad: #c62828; --gps: #1d6fe0;
+  --shadow: 0 2px 12px rgba(10, 20, 30, .2);
+  --font: "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Naskh Arabic", system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Roboto Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1317; --surface: #171d23; --surface2: #222a32; --ink: #e8edf1; --muted: #97a4af; --line: #2a333b;
+    --accent: #ff7a2e; --on-accent: #1b0f06; --good: #4cc380; --warn: #e0a030; --bad: #ff6b6b; --gps: #5aa2ff;
+    --shadow: 0 2px 12px rgba(0, 0, 0, .5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1317; --surface: #171d23; --surface2: #222a32; --ink: #e8edf1; --muted: #97a4af; --line: #2a333b;
+  --accent: #ff7a2e; --on-accent: #1b0f06; --good: #4cc380; --warn: #e0a030; --bad: #ff6b6b; --gps: #5aa2ff;
+  --shadow: 0 2px 12px rgba(0, 0, 0, .5);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h2 { font-size: 18px; margin: 0; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+.num { direction: ltr; unicode-bidi: isolate; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+[hidden] { display: none !important; }
+
+#app { height: 100%; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top, 0px); }
+
+/* الشريط العلوي */
+.top { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.gps { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.gps .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.gps.good .dot { background: var(--good); } .gps.mid .dot { background: var(--warn); } .gps.bad .dot { background: var(--bad); }
+.gps.wait .dot { animation: pulse 1.2s infinite; }
+.gps span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes pulse { 50% { opacity: .25; } }
+.seg { display: inline-flex; background: var(--surface2); border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; padding: 6px 12px; min-height: 34px; border-radius: 8px; font-size: 13px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.2); font-weight: 600; }
+.icon-btn { width: 40px; height: 40px; border-radius: 10px; border: 0; background: var(--surface2); display: grid; place-items: center; flex: none; }
+.icon-btn svg { width: 20px; height: 20px; }
+
+main { flex: 1; position: relative; min-height: 0; }
+.view { position: absolute; inset: 0; display: none; }
+.view.active { display: block; }
+.scroll { overflow: auto; padding: 14px 16px 24px; }
+.scroll > * + * { margin-top: 12px; }
+
+/* التبويبات */
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.tabs button { border: 0; background: transparent; padding: 8px 4px 7px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; color: var(--muted); min-height: 54px; }
+.tabs button svg { width: 22px; height: 22px; }
+.tabs button[aria-selected="true"] { color: var(--accent); font-weight: 700; }
+
+/* الخريطة */
+#map { position: absolute; inset: 0; direction: ltr; background: #1a2229; }
+.map-tools { position: absolute; top: 10px; inset-inline: 10px; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; z-index: 800; }
+.map-tools > * { pointer-events: auto; }
+.fab-col { display: flex; flex-direction: column; gap: 8px; }
+.fab { width: 44px; height: 44px; border-radius: 12px; border: 0; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); display: grid; place-items: center; font-size: 22px; line-height: 1; }
+.fab svg { width: 22px; height: 22px; }
+.fab.on { color: var(--accent); }
+.map-tools .seg { box-shadow: var(--shadow); background: var(--surface); }
+.map-tools .seg button[aria-pressed="true"] { background: var(--surface2); }
+
+.hud { position: absolute; z-index: 800; inset-inline: 10px; bottom: 10px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.coords { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.coord { background: var(--bg); border-radius: 10px; padding: 6px 10px; display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.coord .k { color: var(--accent); font-weight: 700; font-family: var(--mono); font-size: 13px; }
+.coord .v { font-size: 17px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.wait { grid-column: 1 / -1; color: var(--muted); padding: 6px 2px; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--muted); }
+.actions { display: grid; grid-template-columns: 1.2fr 1fr; gap: 8px; }
+
+.btn { min-height: 44px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface2); font-weight: 600; font-size: 14px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .5; }
+.mini { min-height: 34px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface2); font-size: 13px; }
+
+.me-dot { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--gps); border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(29,111,224,.35), 0 1px 4px rgba(0,0,0,.5); }
+.pt-pin { position: relative; width: 14px; height: 14px; }
+.pt-pin i { position: absolute; inset: 0; background: #e25a0b; border: 2px solid #fff; transform: rotate(45deg); box-shadow: 0 1px 4px rgba(0,0,0,.6); }
+.pt-pin b { position: absolute; top: -3px; left: 20px; white-space: nowrap; font: 700 12px/1.2 var(--font); color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 2px #000; }
+.leaflet-top.leaflet-right .leaflet-control-scale { margin-top: 60px; margin-right: 10px; }
+.leaflet-popup-content { direction: rtl; font-family: var(--font); margin: 10px 12px; }
+.pop-c { font: 13px var(--mono); direction: ltr; margin-bottom: 8px; line-height: 1.6; }
+.pop-b { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* النقاط */
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.bar .count { color: var(--muted); font-weight: 400; font-size: 14px; }
+.bar-b { display: flex; gap: 8px; }
+.selbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface); border: 1px solid var(--accent); border-radius: 12px; padding: 8px 12px; }
+.pt { display: flex; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; align-items: flex-start; }
+.pt + .pt { margin-top: 8px; }
+.chk { margin: 0; padding: 4px 0 0; }
+.chk input { width: 22px; height: 22px; accent-color: var(--accent); min-height: 0; }
+.pt-main { flex: 1; min-width: 0; }
+.pt-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chip { font-size: 12px; background: var(--surface2); border-radius: 6px; padding: 1px 8px; color: var(--muted); }
+.pt-c { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13.5px; margin-top: 4px; }
+.pt-c b { color: var(--accent); }
+.pt-m { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.pt-a { display: flex; flex-direction: column; gap: 6px; }
+.empty { color: var(--muted); text-align: center; padding: 28px 12px; border: 1px dashed var(--line); border-radius: 12px; }
+
+/* النماذج */
+input, select, textarea { width: 100%; min-height: 44px; padding: 9px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+textarea { resize: vertical; font-family: var(--mono); direction: ltr; line-height: 1.6; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.hint { font-size: 12.5px; color: var(--muted); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > .btn { flex: 1; }
+
+/* التوقيع */
+.dial { display: grid; place-items: center; padding: 6px 0 0; }
+.dial svg { width: min(62vw, 240px); height: auto; }
+.dial .ring { fill: var(--surface); stroke: var(--line); stroke-width: 2; }
+.dial .tick { fill: var(--muted); font: 700 14px var(--mono); text-anchor: middle; dominant-baseline: central; }
+.dial .tick.n { fill: var(--accent); }
+.dial .arrow { fill: var(--accent); transition: transform .15s linear; }
+.dial.hit .arrow { fill: var(--good); }
+.big-dist { font-size: 44px; font-weight: 700; text-align: center; line-height: 1.1; }
+.dial.hit + .big-dist, .big-dist.hit { color: var(--good); }
+.sub { text-align: center; color: var(--muted); }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; text-align: center; min-width: 0; }
+.stat small { display: block; color: var(--muted); font-size: 12px; }
+.stat .num { font-size: 16px; font-weight: 600; }
+
+/* المساحة */
+.res { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.res .stat { text-align: start; }
+.res .wide { grid-column: 1 / -1; }
+.res .stat .num.big { font-size: 22px; }
+.res .stat .ar { font-size: 18px; font-weight: 700; direction: rtl; }
+
+/* الأوراق السفلية */
+.sheet { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: flex-end; background: rgba(0, 0, 0, .5); }
+.panel { background: var(--surface); width: 100%; max-height: 90%; overflow: auto; border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+.panel > * + * { margin-top: 10px; }
+.panel h2 { margin-bottom: 4px; }
+.sum { font-size: 13.5px; background: var(--bg); border-radius: 10px; padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.sum b { color: var(--accent); }
+.toast { position: fixed; z-index: 3000; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); inset-inline: 16px; margin-inline: auto; width: fit-content; max-width: calc(100% - 32px); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow); }
+
+@media (min-width: 760px) {
+  .scroll { max-width: 720px; margin-inline: auto; width: 100%; }
+  .view.scroll { inset-inline: 0; }
+  .hud { max-width: 560px; inset-inline-start: 10px; inset-inline-end: auto; }
+  .panel { max-width: 560px; margin-inline: auto; border-radius: 18px; margin-bottom: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { .gps.wait .dot { animation: none; } .dial .arrow { transition: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div class="gps wait" id="gps"><i class="dot"></i><span id="gps-text">جارٍ تشغيل GPS…</span></div>
+    <div class="seg" id="fmtSeg" role="group" aria-label="نظام الإحداثيات">
+      <button type="button" data-fmt="utm" aria-pressed="true">UTM</button>
+      <button type="button" data-fmt="deg" aria-pressed="false">WGS84</button>
+    </div>
+    <button type="button" class="icon-btn" id="btn-settings" aria-label="الإعدادات">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <!-- الخريطة -->
+    <section id="v-map" class="view active" aria-label="الخريطة">
+      <div id="map"></div>
+      <div class="map-tools">
+        <div class="seg" id="layerSeg" role="group" aria-label="نوع الخريطة">
+          <button type="button" data-layer="sat" aria-pressed="true">قمر صناعي</button>
+          <button type="button" data-layer="osm" aria-pressed="false">خريطة</button>
+        </div>
+        <div class="fab-col">
+          <button type="button" class="fab" id="btn-locate" aria-label="الذهاب إلى موقعي">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>
+          </button>
+          <button type="button" class="fab" id="btn-zin" aria-label="تكبير">+</button>
+          <button type="button" class="fab" id="btn-zout" aria-label="تصغير">−</button>
+        </div>
+      </div>
+      <div class="hud">
+        <div class="coords" id="hud-coords"></div>
+        <div class="meta" id="hud-meta"></div>
+        <div class="actions">
+          <button type="button" class="btn primary" id="btn-save">حفظ نقطة</button>
+          <button type="button" class="btn" id="btn-avg">متوسط 10 قراءات</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- النقاط -->
+    <section id="v-points" class="view scroll" aria-label="النقاط المحفوظة">
+      <div class="bar">
+        <h2>النقاط <span class="count" id="pt-count"></span></h2>
+        <div class="bar-b">
+          <button type="button" class="btn" id="btn-manual">+ إدخال يدوي</button>
+          <button type="button" class="btn" id="btn-io">تصدير / استيراد</button>
+        </div>
+      </div>
+      <div class="selbar" id="sel-bar" hidden>
+        <span id="sel-text"></span>
+        <div class="row">
+          <button type="button" class="mini" id="sel-all">تحديد الكل</button>
+          <button type="button" class="btn primary" id="sel-area">حساب المساحة</button>
+        </div>
+      </div>
+      <div id="pt-list"></div>
+      <div class="empty" id="pt-empty">لا توجد نقاط بعد. افتح تبويب الخريطة واضغط «حفظ نقطة» وأنت واقف على النقطة، أو أضف نقطة بإحداثياتها.</div>
+    </section>
+
+    <!-- التوقيع -->
+    <section id="v-stake" class="view scroll" aria-label="توقيع نقطة">
+      <h2>توقيع نقطة على الطبيعة</h2>
+      <div>
+        <label for="stk-sel">الهدف</label>
+        <select id="stk-sel"></select>
+      </div>
+      <div class="two">
+        <div><label id="stk-la" for="stk-a">E</label><input id="stk-a" class="num" inputmode="decimal" autocomplete="off"></div>
+        <div><label id="stk-lb" for="stk-b">N</label><input id="stk-b" class="num" inputmode="decimal" autocomplete="off"></div>
+      </div>
+      <button type="button" class="btn" id="stk-set" style="width:100%">تعيين الهدف من الإحداثيات</button>
+
+      <div class="empty" id="stake-empty">اختر نقطة محفوظة، أو اكتب إحداثيات الهدف. بعدها يظهر اتجاه ومسافة النقطة من مكانك الآن.</div>
+      <div id="stake-live" hidden>
+        <div class="card" style="text-align:center">
+          <strong id="st-name"></strong>
+          <div class="hint num" id="st-target"></div>
+        </div>
+        <div class="dial" id="dial">
+          <svg viewBox="-110 -110 220 220" role="img" aria-label="سهم اتجاه الهدف">
+            <circle class="ring" r="104"/>
+            <g id="ringN">
+              <text class="tick n" y="-88">N</text>
+              <text class="tick" x="88">E</text><text class="tick" y="88">S</text><text class="tick" x="-88">W</text>
+            </g>
+            <g id="arrow" class="arrow"><path d="M0 -70 L24 -18 L8 -18 L8 58 L-8 58 L-8 -18 L-24 -18 Z"/></g>
+          </svg>
+        </div>
+        <div class="big-dist num" id="st-dist">—</div>
+        <div class="sub" id="st-dir"></div>
+        <div class="grid3">
+          <div class="stat"><small>الاتجاه (Azimuth)</small><span class="num" id="st-az">—</span></div>
+          <div class="stat"><small>ΔE شرق/غرب</small><span class="num" id="st-de">—</span></div>
+          <div class="stat"><small>ΔN شمال/جنوب</small><span class="num" id="st-dn">—</span></div>
+        </div>
+        <div class="two">
+          <div><label for="stk-tol">نطاق القبول (متر)</label><input id="stk-tol" class="num" inputmode="decimal"></div>
+          <div><label>&nbsp;</label><button type="button" class="btn" id="btn-compass" style="width:100%">تفعيل البوصلة</button></div>
+        </div>
+        <p class="hint" id="st-note"></p>
+        <button type="button" class="btn" id="stk-map" style="width:100%">عرض الهدف على الخريطة</button>
+      </div>
+    </section>
+
+    <!-- المساحة -->
+    <section id="v-area" class="view scroll" aria-label="حساب المساحة">
+      <h2>حساب المساحة</h2>
+      <p class="hint" id="area-hint"></p>
+      <div>
+        <label for="area-text" id="area-label">إحداثيات الرؤوس</label>
+        <textarea id="area-text" rows="8" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="area-me">+ موقعي الحالي</button>
+        <button type="button" class="btn" id="area-sel">+ النقاط المحددة</button>
+        <button type="button" class="btn" id="area-clear">مسح</button>
+      </div>
+      <button type="button" class="btn primary" id="area-calc" style="width:100%">احسب المساحة</button>
+      <div id="area-res" hidden>
+        <div class="res">
+          <div class="stat wide"><small>المساحة بالمتر المربع</small><span class="num big" id="r-m2"></span></div>
+          <div class="stat wide"><small>بالفدان والقيراط والسهم</small><span class="ar" id="r-fed"></span></div>
+          <div class="stat"><small>هكتار</small><span class="num" id="r-ha"></span></div>
+          <div class="stat"><small>المحيط (م)</small><span class="num" id="r-per"></span></div>
+          <div class="stat wide"><small>عدد الرؤوس</small><span class="num" id="r-n"></span></div>
+        </div>
+        <button type="button" class="btn" id="area-map" style="width:100%;margin-top:8px">عرض المضلع على الخريطة</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs" role="tablist" aria-label="الأقسام">
+    <button type="button" role="tab" data-tab="map" aria-selected="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+      الخريطة</button>
+    <button type="button" role="tab" data-tab="points" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+      النقاط</button>
+    <button type="button" role="tab" data-tab="stake" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>
+      التوقيع</button>
+    <button type="button" role="tab" data-tab="area" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8l7-4 9 5-3 10-11 1z"/><circle cx="4" cy="8" r="1.2" fill="currentColor"/><circle cx="11" cy="4" r="1.2" fill="currentColor"/><circle cx="20" cy="9" r="1.2" fill="currentColor"/><circle cx="17" cy="19" r="1.2" fill="currentColor"/><circle cx="6" cy="20" r="1.2" fill="currentColor"/></svg>
+      المساحة</button>
+  </nav>
+</div>
+
+<!-- ورقة حفظ/تعديل نقطة -->
+<div class="sheet" id="sh-point" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="ps-title">
+    <h2 id="ps-title">نقطة جديدة</h2>
+    <div class="sum num" id="ps-sum"></div>
+    <div id="ps-manual" class="two" hidden>
+      <div><label id="ps-la" for="ps-a">E</label><input id="ps-a" class="num" inputmode="decimal" autocomplete="off"></div>
+      <div><label id="ps-lb" for="ps-b">N</label><input id="ps-b" class="num" inputmode="decimal" autocomplete="off"></div>
+    </div>
+    <div class="two">
+      <div><label for="ps-name">اسم النقطة</label><input id="ps-name" autocomplete="off"></div>
+      <div><label for="ps-code">الكود / الوصف</label><input id="ps-code" autocomplete="off"></div>
+    </div>
+    <div class="two">
+      <div><label for="ps-alt">الارتفاع (م)</label><input id="ps-alt" class="num" inputmode="decimal" autocomplete="off"></div>
+      <div><label for="ps-note">ملاحظة</label><input id="ps-note" autocomplete="off"></div>
+    </div>
+    <div class="row">
+      <button type="button" class="btn primary" id="ps-save">حفظ</button>
+      <button type="button" class="btn" id="ps-cancel">إلغاء</button>
+      <button type="button" class="btn danger" id="ps-del" hidden>حذف</button>
+    </div>
+  </div>
+</div>
+
+<!-- ورقة التصدير والاستيراد -->
+<div class="sheet" id="sh-io" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="io-title">
+    <h2 id="io-title">نقل النقاط</h2>
+    <p class="hint" id="io-info"></p>
+    <div class="row">
+      <button type="button" class="btn" id="ex-csv">CSV (إكسل)</button>
+      <button type="button" class="btn" id="ex-kml">KML (جوجل إيرث)</button>
+      <button type="button" class="btn" id="ex-geo">GeoJSON</button>
+    </div>
+    <button type="button" class="btn primary" id="ex-share" style="width:100%" hidden>مشاركة ملف CSV</button>
+    <div>
+      <label for="im-file">استيراد من ملف CSV</label>
+      <input id="im-file" type="file" accept=".csv,.txt,text/csv,text/plain">
+      <p class="hint">يقرأ الملف الأعمدة: name, lat, lon أو E, N (بنظام UTM الحالي)، ويقبل أيضاً ملفاً بلا عناوين (س ص).</p>
+    </div>
+    <div class="row">
+      <button type="button" class="btn danger" id="ex-clear">حذف كل النقاط</button>
+      <button type="button" class="btn" id="io-close">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- ورقة الإعدادات -->
+<div class="sheet" id="sh-set" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="set-title">
+    <h2 id="set-title">الإعدادات</h2>
+    <div>
+      <label for="set-zone">منطقة UTM (اتركها فارغة للتحديد التلقائي)</label>
+      <input id="set-zone" class="num" inputmode="numeric" placeholder="تلقائي">
+      <p class="hint" id="set-zone-hint"></p>
+    </div>
+    <p class="hint">مصر تقع في المنطقتين 35 (غرب خط 30 شرقاً) و36 (شرقه). كل عرض أو تحويل أو حساب مساحة يستخدم هذه المنطقة.</p>
+    <button type="button" class="btn primary" id="set-close" style="width:100%">تم</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="geo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
